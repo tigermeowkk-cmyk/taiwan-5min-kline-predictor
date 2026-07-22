@@ -13,6 +13,7 @@ from scipy.signal import find_peaks
 st.set_page_config(page_title="股票／期貨 5 分盤 XGBoost 預測工具", layout="wide")
 
 FINMIND_URL = "https://api.finmindtrade.com/api/v4/data"
+FUGLE_URL = "https://api.fugle.tw/marketdata/v1.0/stock"
 API_CALL_DELAY_SECONDS = 0.3
 
 # ==========================================
@@ -78,26 +79,32 @@ def get_front_month_contract(prefix, as_of=None):
 # 資料抓取：個股 / 期貨 5 分K
 # ==========================================
 
-@st.cache_data(ttl=300, show_spinner=False)
-def load_stock_5min(stock_id, start, end, token):
-    frames = []
-    for day in _trading_days(start, end):
-        rows = _finmind_get_day("TaiwanStockKBar", stock_id, day, token)
-        if rows:
-            frames.append(pd.DataFrame(rows))
-        time.sleep(API_CALL_DELAY_SECONDS)
+@st.cache_data(ttl=60, show_spinner=False)
+def load_stock_5min_fugle(stock_id, api_key):
+    """
+    個股改用 Fugle 即時行情（免費方案就有）：一次呼叫直接拿近 30 天原生 5 分K，
+    資料新鮮度比 FinMind（歷史/延遲資料）好很多，符合當沖需要的即時性。
+    Fugle 這個分K端點不能指定日期範圍，固定回傳近 30 天，不需要像 FinMind 那樣逐日迴圈抓。
+    """
+    try:
+        r = requests.get(
+            f"{FUGLE_URL}/historical/candles/{stock_id}",
+            params={"timeframe": "5"},
+            headers={"X-API-KEY": api_key},
+            timeout=20,
+        )
+        rows = r.json().get("data") or []
+    except Exception:
+        rows = []
 
-    if not frames:
+    if not rows:
         return pd.DataFrame()
 
-    df = pd.concat(frames, ignore_index=True)
-    df["date"] = pd.to_datetime(df["date"] + " " + df["minute"])
-    df = df.sort_values("date").set_index("date")
-    df_5m = df.resample("5min").agg(
-        {"open": "first", "high": "max", "low": "min", "close": "last", "volume": "sum"}
-    ).dropna().reset_index()
-    df_5m["is_night_session"] = 0
-    return df_5m
+    df = pd.DataFrame(rows)
+    df["date"] = pd.to_datetime(df["date"]).dt.tz_localize(None)
+    df = df.sort_values("date").reset_index(drop=True)
+    df["is_night_session"] = 0
+    return df[["date", "open", "high", "low", "close", "volume", "is_night_session"]]
 
 
 @st.cache_data(ttl=300, show_spinner=False)
@@ -208,12 +215,19 @@ st.sidebar.header("參數設定")
 product_type = st.sidebar.selectbox("商品類型", ["個股", "大台指期 (TX)", "小台指期 (MTX)"])
 stock_code = st.sidebar.text_input("股票代碼", value="2330") if product_type == "個股" else None
 lookback_days = st.sidebar.slider("回溯天數（訓練資料量）", min_value=5, max_value=20, value=10)
-if product_type != "個股":
-    st.sidebar.caption("💡 期貨是逐筆成交資料，天數拉長會明顯變慢，建議先從 5~10 天開始測試。")
+if product_type == "個股":
+    st.sidebar.caption("💡 個股走 Fugle 即時行情，資料新鮮度接近即時；固定抓近 30 天，這裡的天數只是拿來裁切訓練窗口。")
+else:
+    st.sidebar.caption("💡 期貨目前仍用 FinMind 歷史逐筆資料（非即時），天數拉長會明顯變慢，建議先從 5~10 天開始測試。")
 
 if st.sidebar.button("開始執行預測"):
-    token = os.environ.get("FINMIND_TOKEN")
-    if not token:
+    finmind_token = os.environ.get("FINMIND_TOKEN")
+    fugle_key = os.environ.get("FUGLE_API_KEY")
+
+    if product_type == "個股" and not fugle_key:
+        st.error("🔑 找不到 Fugle API Key！請在 Settings > Secrets 設定 FUGLE_API_KEY")
+        st.stop()
+    if not finmind_token:
         st.error("🔑 找不到 FinMind Token！請在 Settings > Secrets 設定 FINMIND_TOKEN")
         st.stop()
 
@@ -222,13 +236,16 @@ if st.sidebar.button("開始執行預測"):
 
     with st.spinner("🤖 正在抓取資料並訓練模型..."):
         if product_type == "個股":
-            df = load_stock_5min(stock_code, start_date, end_date, token)
+            df = load_stock_5min_fugle(stock_code, fugle_key)
+            if not df.empty:
+                bars_per_day_estimate = 54  # 09:00~13:30 一天約 54 根 5 分K
+                df = df.tail(lookback_days * bars_per_day_estimate).reset_index(drop=True)
             label = stock_code
         elif product_type.startswith("大台"):
-            df = load_futures_5min("TX", start_date, end_date, token)
+            df = load_futures_5min("TX", start_date, end_date, finmind_token)
             label = "大台指期 (TX)"
         else:
-            df = load_futures_5min("MTX", start_date, end_date, token)
+            df = load_futures_5min("MTX", start_date, end_date, finmind_token)
             label = "小台指期 (MTX)"
 
         if df.empty:
@@ -265,7 +282,7 @@ if st.sidebar.button("開始執行預測"):
         df["minutes_since_open"] = ((df["date"].dt.hour - 9) * 60 + df["date"].dt.minute).clip(lower=0)
 
         # ---- 大盤前導特徵（慢變數，日頻 ffill 鋪到當天每根5分K）----
-        macro = load_daily_macro(start_date, end_date, token, include_tx_futures=(product_type == "個股"))
+        macro = load_daily_macro(start_date, end_date, finmind_token, include_tx_futures=(product_type == "個股"))
         df["pure_date"] = df["date"].dt.date
         macro_cols = []
         if not macro.empty:
