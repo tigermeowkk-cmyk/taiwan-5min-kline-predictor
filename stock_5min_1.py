@@ -458,12 +458,9 @@ if st.sidebar.button("開始執行預測", disabled=not st.session_state.disclai
         fig.update_layout(xaxis_rangeslider_visible=False, height=500)
         st.plotly_chart(fig, use_container_width=True)
 
-        st.subheader("💡 本次預測關鍵影響因子分析")
+        # 特徵重要性只留後台看（Render 的 log），不顯示在使用者畫面上
         importance_df = pd.DataFrame({
             "Feature": feature_cols,
             "Importance": model.feature_importances_,
-        }).sort_values("Importance", ascending=True)
-
-        feat_fig = go.Figure(go.Bar(x=importance_df["Importance"], y=importance_df["Feature"], orientation="h"))
-        feat_fig.update_layout(height=300)
-        st.plotly_chart(feat_fig, use_container_width=True)
+        }).sort_values("Importance", ascending=False)
+        print(f"[{label}] 特徵重要性：\n{importance_df.to_string(index=False)}")
