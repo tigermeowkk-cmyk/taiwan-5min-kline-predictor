@@ -1,0 +1,6 @@
+__pycache__/
+*.pyc
+.streamlit/secrets.toml
+
+# 舊版本手動快照，裡面混了 Fugle token，不進版本控制
+程式碼修改紀錄/
