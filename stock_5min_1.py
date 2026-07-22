@@ -260,6 +260,20 @@ else:
     st.sidebar.caption("💡 期貨目前仍用 FinMind 歷史逐筆資料（非即時），天數拉長會明顯變慢，建議先從 5~10 天開始測試。")
 
 if st.sidebar.button("開始執行預測", disabled=not st.session_state.disclaimer_accepted):
+    # 按下去之後自動收合側邊欄，讓手機版直接看到預測結果，不用使用者自己再手動收起來
+    st.components.v1.html("""
+    <script>
+        window.parent.document.dispatchEvent(new KeyboardEvent('keydown', {key: 'Escape', keyCode: 27}));
+        var closeBtns = window.parent.document.querySelectorAll('button[kind="headerNoPadding"]');
+        if (closeBtns.length > 0) {
+            closeBtns.forEach(btn => btn.click());
+        } else {
+            var altBtn = window.parent.document.querySelector('[data-testid="stSidebarCollapseButton"]');
+            if (altBtn) { altBtn.click(); }
+        }
+    </script>
+    """, height=0, width=0)
+
     finmind_token = os.environ.get("FINMIND_TOKEN")
     fugle_key = os.environ.get("FUGLE_API_KEY")
 
