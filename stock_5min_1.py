@@ -10,7 +10,7 @@ from sklearn.metrics import accuracy_score
 import plotly.graph_objects as go
 from scipy.signal import find_peaks
 
-st.set_page_config(page_title="股票／期貨 5 分盤 XGBoost 預測工具", layout="wide")
+st.set_page_config(page_title="股票5分盤AI預測工具", layout="wide")
 
 FINMIND_URL = "https://api.finmindtrade.com/api/v4/data"
 FUGLE_URL = "https://api.fugle.tw/marketdata/v1.0/stock"
@@ -209,18 +209,57 @@ def load_daily_macro(start, end, token, include_tx_futures):
 # 前台
 # ==========================================
 
-st.title("📈 股票／期貨 5 分鐘 K 線 AI 預測系統")
+st.markdown("""
+<style>
+.mobile-hint { display: none; }
+@media (max-width: 768px) {
+    .mobile-hint {
+        display: block;
+        background-color: #fffbeb;
+        color: #d97706;
+        padding: 10px 14px;
+        border-radius: 8px;
+        margin-bottom: 12px;
+        font-weight: 600;
+    }
+}
+</style>
+""", unsafe_allow_html=True)
+
+st.title("📈 股票5分盤AI預測工具")
+st.markdown("<div class='mobile-hint'>📱 手機版用戶：請點擊左上角 <strong>「&gt;」</strong> 符號展開側邊欄，開始設定預測參數！</div>", unsafe_allow_html=True)
+
+# ⚖️ 使用前先跳出投資免責聲明，沒按同意就不能操作
+@st.dialog("⚖️ 投資免責聲明", width="large")
+def show_disclaimer_modal():
+    st.warning("⚠️ **在使用本工具之前，請務必閱讀以下投資免責聲明：**")
+    st.markdown("""
+    * 本工具所有預測結果，皆為程式演算法根據歷史資料自動運算之產出。
+    * ❌ **不構成**任何買賣與投資操作之要約、承諾或建議。
+    * ❌ **不保證**未來獲利或預測之準確性，過去績效不代表未來表現。
+
+    投資人應獨立判斷、審慎評估，並自負最終投資盈虧風險。
+    """)
+    st.write("")
+    if st.button("✅ 我已閱讀並完全同意上述聲明，進入系統", type="primary", use_container_width=True):
+        st.session_state.disclaimer_accepted = True
+        st.rerun()
+
+if "disclaimer_accepted" not in st.session_state:
+    st.session_state.disclaimer_accepted = False
+if not st.session_state.disclaimer_accepted:
+    show_disclaimer_modal()
 
 st.sidebar.header("參數設定")
-product_type = st.sidebar.selectbox("商品類型", ["個股", "大台指期 (TX)", "小台指期 (MTX)"])
-stock_code = st.sidebar.text_input("股票代碼", value="2330") if product_type == "個股" else None
-lookback_days = st.sidebar.slider("回溯天數（訓練資料量）", min_value=5, max_value=20, value=10)
+product_type = st.sidebar.selectbox("商品類型", ["個股", "大台指期 (TX)", "小台指期 (MTX)"], disabled=not st.session_state.disclaimer_accepted)
+stock_code = st.sidebar.text_input("股票代碼", value="2330", disabled=not st.session_state.disclaimer_accepted) if product_type == "個股" else None
+lookback_days = st.sidebar.slider("回溯天數（訓練資料量）", min_value=5, max_value=20, value=10, disabled=not st.session_state.disclaimer_accepted)
 if product_type == "個股":
     st.sidebar.caption("💡 個股走 Fugle 即時行情，資料新鮮度接近即時；固定抓近 30 天，這裡的天數只是拿來裁切訓練窗口。")
 else:
     st.sidebar.caption("💡 期貨目前仍用 FinMind 歷史逐筆資料（非即時），天數拉長會明顯變慢，建議先從 5~10 天開始測試。")
 
-if st.sidebar.button("開始執行預測"):
+if st.sidebar.button("開始執行預測", disabled=not st.session_state.disclaimer_accepted):
     finmind_token = os.environ.get("FINMIND_TOKEN")
     fugle_key = os.environ.get("FUGLE_API_KEY")
 
@@ -405,7 +444,7 @@ if st.sidebar.button("開始執行預測"):
         fig.update_layout(xaxis_rangeslider_visible=False, height=500)
         st.plotly_chart(fig, use_container_width=True)
 
-        st.subheader("💡 XGBoost 特徵重要性分析 (Feature Importance)")
+        st.subheader("💡 本次預測關鍵影響因子分析")
         importance_df = pd.DataFrame({
             "Feature": feature_cols,
             "Importance": model.feature_importances_,
