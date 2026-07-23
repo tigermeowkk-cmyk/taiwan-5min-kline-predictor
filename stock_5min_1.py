@@ -12,7 +12,7 @@ import plotly.graph_objects as go
 from scipy.signal import find_peaks
 from sqlalchemy import create_engine, text
 
-st.set_page_config(page_title="TigerMeow股票1分盤/5分盤AI預測工具", layout="wide")
+st.set_page_config(page_title="📈 股票1分盤/5分盤AI預測工具", layout="wide")
 
 FINMIND_URL = "https://api.finmindtrade.com/api/v4/data"
 FUGLE_URL = "https://api.fugle.tw/marketdata/v1.0/stock"
