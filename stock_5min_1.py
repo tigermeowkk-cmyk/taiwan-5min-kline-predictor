@@ -15,6 +15,22 @@ st.set_page_config(page_title="TigerMeow股票1分盤/5分盤AI預測工具", la
 FINMIND_URL = "https://api.finmindtrade.com/api/v4/data"
 FUGLE_URL = "https://api.fugle.tw/marketdata/v1.0/stock"
 API_CALL_DELAY_SECONDS = 0.3
+ACCURACY_LOG_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "accuracy_log.csv")
+
+
+def _load_accuracy_log():
+    if os.path.exists(ACCURACY_LOG_PATH):
+        try:
+            return pd.read_csv(ACCURACY_LOG_PATH)
+        except Exception:
+            return pd.DataFrame()
+    return pd.DataFrame()
+
+
+def _append_accuracy_log(record):
+    log_df = _load_accuracy_log()
+    log_df = pd.concat([log_df, pd.DataFrame([record])], ignore_index=True)
+    log_df.to_csv(ACCURACY_LOG_PATH, index=False)
 
 # ==========================================
 # 底層：FinMind 呼叫
@@ -445,8 +461,41 @@ if st.sidebar.button("開始執行預測", disabled=not st.session_state.disclai
             )
             if len(X_test) < 30:
                 st.caption(f"⚠️ 測試樣本只有 {len(X_test)} 根K棒，準確率數字的可信度有限，建議拉長回溯天數觀察是否穩定。")
+
+            _append_accuracy_log({
+                "run_time": datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                "product": product_type,
+                "label": label,
+                "timeframe": timeframe_label,
+                "lookback_days": lookback_days,
+                "accuracy": round(float(acc), 4),
+                "test_samples": len(X_test),
+                "next_pred": "上漲" if next_pred == 1 else "下跌/盤整",
+                "confidence": round(float(ai_confidence), 4),
+            })
         else:
             st.caption("⚠️ 測試集資料不足，這次無法計算樣本外準確率，結果請更謹慎看待。")
+
+        with st.expander("📊 歷史準確率紀錄（比較 1分K / 5分K）"):
+            log_df = _load_accuracy_log()
+            if log_df.empty:
+                st.caption("目前還沒有歷史紀錄，多執行幾次預測後這裡會累積資料。")
+            else:
+                summary = (
+                    log_df.groupby(["label", "timeframe"])["accuracy"]
+                    .agg(["mean", "count"])
+                    .reset_index()
+                )
+                summary["mean"] = (summary["mean"] * 100).round(2)
+                summary = summary.rename(columns={
+                    "label": "商品", "timeframe": "週期",
+                    "mean": "平均準確率(%)", "count": "測試次數",
+                })
+                st.dataframe(summary, use_container_width=True, hide_index=True)
+                st.caption("最近20筆原始紀錄：")
+                recent_log = log_df.sort_values("run_time", ascending=False).head(20).copy()
+                recent_log["accuracy"] = (recent_log["accuracy"] * 100).round(2)
+                st.dataframe(recent_log, use_container_width=True, hide_index=True)
 
         st.markdown("---")
 
