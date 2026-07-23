@@ -284,6 +284,60 @@ def load_daily_macro(start, end, token, include_tx_futures):
 
 
 # ==========================================
+# 警示訊號判斷邏輯（型態偵測 ＋ AI 雙重認證）
+# 獨立成函式、不依賴 st，之後接 LINE Notify 等推播時可以直接重用同一個判斷結果，
+# 不用再把邏輯複製一份到背景排程/通知腳本裡。
+# ==========================================
+
+def evaluate_entry_exit_signal(df_train_set, next_pred, ai_confidence, timeframe_label, lookback=40):
+    """
+    回傳 (alert_status, alert_msg)：
+    - success：安全進場訊號（W底 + MA20~MA50防守區 + AI同步看漲）
+    - error：安全退場訊號（右腳更低的轉弱型態 + MA50~MA80弱勢區 + AI同步看空）
+    - warning：技術面訊號跟AI方向不一致，風險提示
+    - info：沒有觸發明確型態
+    """
+    recent_data = df_train_set.tail(lookback).reset_index(drop=True)
+    closes = recent_data["close"].values
+    valleys, _ = find_peaks(-closes, distance=3)
+
+    alert_status = "info"
+    alert_msg = "ℹ️ **當前市場監控**：暫未觸發明確的 W底黃金進場 或 型態破敗退場 機制。請維持紀律操作。"
+
+    if len(valleys) >= 2:
+        l_foot, r_foot = valleys[-2], valleys[-1]
+        l_foot_p, r_foot_p = closes[l_foot], closes[r_foot]
+        ma20_r = recent_data["ma_20"].iloc[r_foot]
+        ma50_r = recent_data["ma_50"].iloc[r_foot]
+        lower_bound, upper_bound = min(ma20_r, ma50_r), max(ma20_r, ma50_r)
+
+        if (r_foot_p > l_foot_p) and (lower_bound <= r_foot_p <= upper_bound):
+            if next_pred == 1:
+                alert_status = "success"
+                alert_msg = f"🟢 **【安全進場訊號】** {timeframe_label}偵測到標準 W 底（右腳高於左腳），且回測落於 MA20 ~ MA50 的關鍵防守區！**此時後台 AI 模型同步強烈看漲（信心度: {ai_confidence*100:.1f}%）**，技術面與數據預測達成高度共識，**此處可安全進場**。"
+            else:
+                alert_status = "warning"
+                alert_msg = f"⚠️ **【進場風險提示】** 技術面雖然出現 W 底且落於 MA20 ~ MA50 支撐區，**但 AI 後台模型偵測到潛在轉弱風險（下跌/盤整機率: {ai_confidence*100:.1f}%）**。此型態極有可能為誘多的「假突破」，**不建議此處冒險進場**。"
+
+    if len(valleys) >= 2 and alert_status == "info":
+        l_foot, r_foot = valleys[-2], valleys[-1]
+        l_foot_p, r_foot_p = closes[l_foot], closes[r_foot]
+        ma50_r = recent_data["ma_50"].iloc[r_foot]
+        ma80_r = recent_data["ma_80"].iloc[r_foot]
+        lower_bound, upper_bound = min(ma50_r, ma80_r), max(ma50_r, ma80_r)
+
+        if (r_foot_p < l_foot_p) and (lower_bound <= r_foot_p <= upper_bound):
+            if next_pred == 0:
+                alert_status = "error"
+                alert_msg = f"🚨 **【安全退場訊號】** {timeframe_label}走出轉弱型態（右腳低於左腳），且價格已沉淪至 MA50 ~ MA80 的弱勢區間。**同時 AI 後台模型亦全面看空（看跌信心度: {ai_confidence*100:.1f}%）**，均線防守全面失守，**強烈建議現股多單退場或進行避險**。"
+            else:
+                alert_status = "warning"
+                alert_msg = f"⚠️ **【退場風險提示】** 雖然價格落入 MA50 ~ MA80 且右腳偏低，但 **AI 後台模型預估此處即將迎來短線反彈（看漲信心度: {ai_confidence*100:.1f}%）**，目前可能屬於主力的洗盤破底翻，**建議在此處暫緩殺低，觀察下一根K線是否站穩**。"
+
+    return alert_status, alert_msg
+
+
+# ==========================================
 # 前台
 # ==========================================
 
@@ -485,46 +539,8 @@ if st.sidebar.button("開始執行預測", disabled=not st.session_state.disclai
         next_pred_proba = model.predict_proba(latest_features)[0]
         ai_confidence = next_pred_proba[1] if next_pred == 1 else next_pred_proba[0]
 
-        # ----------------- 🎯 型態偵測 ＋ AI 雙重認證 -----------------
-        lookback = 40
-        recent_data = df_train_set.tail(lookback).reset_index(drop=True)
-        closes = recent_data["close"].values
-
-        valleys, _ = find_peaks(-closes, distance=3)
-        peaks, _ = find_peaks(closes, distance=3)
-
-        alert_status = "info"
-        alert_msg = "ℹ️ **當前市場監控**：暫未觸發明確的 W底黃金進場 或 型態破敗退場 機制。請維持紀律操作。"
-
-        if len(valleys) >= 2:
-            l_foot, r_foot = valleys[-2], valleys[-1]
-            l_foot_p, r_foot_p = closes[l_foot], closes[r_foot]
-            ma20_r = recent_data["ma_20"].iloc[r_foot]
-            ma50_r = recent_data["ma_50"].iloc[r_foot]
-            lower_bound, upper_bound = min(ma20_r, ma50_r), max(ma20_r, ma50_r)
-
-            if (r_foot_p > l_foot_p) and (lower_bound <= r_foot_p <= upper_bound):
-                if next_pred == 1:
-                    alert_status = "success"
-                    alert_msg = f"🟢 **【安全進場訊號】** {timeframe_label}偵測到標準 W 底（右腳高於左腳），且回測落於 MA20 ~ MA50 的關鍵防守區！**此時後台 AI 模型同步強烈看漲（信心度: {ai_confidence*100:.1f}%）**，技術面與數據預測達成高度共識，**此處可安全進場**。"
-                else:
-                    alert_status = "warning"
-                    alert_msg = f"⚠️ **【進場風險提示】** 技術面雖然出現 W 底且落於 MA20 ~ MA50 支撐區，**但 AI 後台模型偵測到潛在轉弱風險（下跌/盤整機率: {ai_confidence*100:.1f}%）**。此型態極有可能為誘多的「假突破」，**不建議此處冒險進場**。"
-
-        if len(valleys) >= 2 and alert_status == "info":
-            l_foot, r_foot = valleys[-2], valleys[-1]
-            l_foot_p, r_foot_p = closes[l_foot], closes[r_foot]
-            ma50_r = recent_data["ma_50"].iloc[r_foot]
-            ma80_r = recent_data["ma_80"].iloc[r_foot]
-            lower_bound, upper_bound = min(ma50_r, ma80_r), max(ma50_r, ma80_r)
-
-            if (r_foot_p < l_foot_p) and (lower_bound <= r_foot_p <= upper_bound):
-                if next_pred == 0:
-                    alert_status = "error"
-                    alert_msg = f"🚨 **【安全退場訊號】** {timeframe_label}走出轉弱型態（右腳低於左腳），且價格已沉淪至 MA50 ~ MA80 的弱勢區間。**同時 AI 後台模型亦全面看空（看跌信心度: {ai_confidence*100:.1f}%）**，均線防守全面失守，**強烈建議現股多單退場或進行避險**。"
-                else:
-                    alert_status = "warning"
-                    alert_msg = f"⚠️ **【退場風險提示】** 雖然價格落入 MA50 ~ MA80 且右腳偏低，但 **AI 後台模型預估此處即將迎來短線反彈（看漲信心度: {ai_confidence*100:.1f}%）**，目前可能屬於主力的洗盤破底翻，**建議在此處暫緩殺低，觀察下一根K線是否站穩**。"
+        # ----------------- 🎯 型態偵測 ＋ AI 雙重認證（警示系統的訊號判斷邏輯）-----------------
+        alert_status, alert_msg = evaluate_entry_exit_signal(df_train_set, next_pred, ai_confidence, timeframe_label)
 
         if alert_status == "success":
             st.success(alert_msg)
