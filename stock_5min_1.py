@@ -330,6 +330,7 @@ st.sidebar.header("參數設定")
 product_type = st.sidebar.selectbox("商品類型", ["個股", "大台指期 (TX)", "小台指期 (MTX)"], disabled=not st.session_state.disclaimer_accepted)
 stock_code = st.sidebar.text_input("股票代碼", value="2330", disabled=not st.session_state.disclaimer_accepted) if product_type == "個股" else None
 timeframe_label = st.sidebar.radio("K棒週期", ["5分K", "1分K"], horizontal=True, disabled=not st.session_state.disclaimer_accepted)
+st.sidebar.caption("🟢 5分盤適合追求穩定訊號、雜訊較少；🟡 1分盤更新快但波動與雜訊多，建議搭配自己的交易策略，不宜只依賴單一訊號。")
 timeframe = "5" if timeframe_label == "5分K" else "1"
 lookback_days = st.sidebar.slider("回溯天數（訓練資料量）", min_value=5, max_value=20, value=10, disabled=not st.session_state.disclaimer_accepted)
 if product_type == "個股":
@@ -565,7 +566,7 @@ if st.sidebar.button("開始執行預測", disabled=not st.session_state.disclai
         # 圖表跟模型訓練/測試切分脫鉤：測試集是照筆數80/20切的，切點常常落在某天中午，
         # 會讓圖表第一天從中途才開始（少了開盤09:00那段）。這裡改成固定抓「最近幾個完整交易日」來畫，
         # 確保每個顯示出來的交易日都是從09:00完整畫起。
-        PLOT_RECENT_DAYS = 2
+        PLOT_RECENT_DAYS = 1
         recent_dates = sorted(df_train_set["pure_date"].unique())[-PLOT_RECENT_DAYS:]
         plot_df = df_train_set[df_train_set["pure_date"].isin(recent_dates)]
         plot_dates = plot_df["date"]
