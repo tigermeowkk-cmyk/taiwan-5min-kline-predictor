@@ -1,5 +1,6 @@
 import os
 import time
+import base64
 import datetime
 import requests
 import streamlit as st
@@ -18,6 +19,7 @@ FUGLE_URL = "https://api.fugle.tw/marketdata/v1.0/stock"
 API_CALL_DELAY_SECONDS = 0.3
 # 本機 CSV 只在資料庫連不上時當備援，Render 重啟/重新部署後會被清空，不保證長期保存。
 ACCURACY_LOG_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "accuracy_log.csv")
+LOGO_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "assets", "TigerMeow_logo_transparent.png")
 
 
 @st.cache_resource(show_spinner=False)
@@ -299,10 +301,37 @@ st.markdown("""
         font-weight: 600;
     }
 }
+.app-header {
+    position: relative;
+    padding-right: 100px;
+}
+.app-header h1 { margin: 0; }
+.app-header img {
+    position: absolute;
+    top: 0;
+    right: 0;
+    height: 48px;
+}
+@media (max-width: 768px) {
+    .app-header { padding-right: 56px; }
+    .app-header img { height: 28px; }
+}
 </style>
 """, unsafe_allow_html=True)
 
-st.title("📈 TigerMeow股票1分盤/5分盤AI預測工具")
+if os.path.exists(LOGO_PATH):
+    with open(LOGO_PATH, "rb") as f:
+        _logo_b64 = base64.b64encode(f.read()).decode()
+    logo_img_tag = f'<img src="data:image/png;base64,{_logo_b64}" alt="TigerMeow logo">'
+else:
+    logo_img_tag = ""
+
+st.markdown(f"""
+<div class="app-header">
+    <h1>📈 TigerMeow股票1分盤/5分盤AI預測工具</h1>
+    {logo_img_tag}
+</div>
+""", unsafe_allow_html=True)
 st.markdown("<div class='mobile-hint'>📱 手機版用戶：請點擊左上角 <strong>「&gt;」</strong> 符號展開側邊欄，開始設定預測參數！</div>", unsafe_allow_html=True)
 
 # ⚖️ 使用前先跳出投資免責聲明，沒按同意就不能操作
