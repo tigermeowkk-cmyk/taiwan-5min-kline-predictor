@@ -303,18 +303,19 @@ st.markdown("""
 }
 .app-header {
     position: relative;
-    padding-right: 100px;
+    padding-right: 200px;
 }
 .app-header h1 { margin: 0; }
 .app-header img {
     position: absolute;
     top: 0;
     right: 0;
-    height: 48px;
+    height: 90px;
 }
 @media (max-width: 768px) {
-    .app-header { padding-right: 56px; }
-    .app-header img { height: 28px; }
+    .app-header { padding-right: 70px; }
+    .app-header h1 { font-size: 1.4rem; line-height: 1.3; }
+    .app-header img { height: 34px; }
 }
 </style>
 """, unsafe_allow_html=True)
