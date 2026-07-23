@@ -307,8 +307,8 @@ st.markdown("""
     flex-wrap: wrap;
     gap: 16px;
 }
-.app-header img { height: 64px; }
-.app-header h1 { margin: 0; font-size: 2rem; line-height: 1; }
+.app-header img { height: 100px; }
+.app-header h1 { margin: 0; font-size: 2.8rem; line-height: 1; }
 @media (max-width: 768px) {
     .app-header img { height: 40px; }
     .app-header h1 { font-size: 1.4rem; }
