@@ -447,8 +447,9 @@ if st.sidebar.button("開始執行預測", disabled=not st.session_state.disclai
         st.markdown("---")
 
         st.subheader(f"{label} 近期 5 分鐘 K 線走勢")
+        plot_dates = df_train_set["date"].iloc[split_idx:]
         fig = go.Figure(data=[go.Candlestick(
-            x=df_train_set["date"].iloc[split_idx:],
+            x=plot_dates,
             open=df_train_set["open"].iloc[split_idx:],
             high=df_train_set["high"].iloc[split_idx:],
             low=df_train_set["low"].iloc[split_idx:],
@@ -456,6 +457,22 @@ if st.sidebar.button("開始執行預測", disabled=not st.session_state.disclai
             name="K線",
         )])
         fig.update_layout(xaxis_rangeslider_visible=False, height=500)
+
+        # 平日但當天完全沒有 K 棒（國定假日、颱風假等未開盤日），一律視同休市日隱藏，
+        # 不用手動維護每年的國定假日清單。
+        trading_days = set(plot_dates.dt.normalize().unique())
+        all_days = pd.date_range(plot_dates.min().normalize(), plot_dates.max().normalize(), freq="D")
+        closed_weekdays = [d.strftime("%Y-%m-%d") for d in all_days if d not in trading_days and d.weekday() < 5]
+
+        fig.update_xaxes(
+            rangebreaks=[
+                dict(bounds=["sat", "mon"]),  # 隱藏週末
+                dict(bounds=[13.5, 9], pattern="hour"),  # 隱藏收盤到隔日開盤（13:30~09:00，含跨夜0點）
+                dict(values=closed_weekdays),  # 隱藏平日但未開盤的日子（國定假日等）
+            ],
+            dtick=3600000,  # 每小時一個刻度（整點標記）
+            tickformat="%H:%M",
+        )
         st.plotly_chart(fig, use_container_width=True)
 
         # 特徵重要性只留後台看（Render 的 log），不顯示在使用者畫面上
