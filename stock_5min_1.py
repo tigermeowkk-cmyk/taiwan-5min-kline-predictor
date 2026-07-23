@@ -10,7 +10,7 @@ from sklearn.metrics import accuracy_score
 import plotly.graph_objects as go
 from scipy.signal import find_peaks
 
-st.set_page_config(page_title="股票5分盤AI預測工具", layout="wide")
+st.set_page_config(page_title="股票K線AI預測工具", layout="wide")
 
 FINMIND_URL = "https://api.finmindtrade.com/api/v4/data"
 FUGLE_URL = "https://api.fugle.tw/marketdata/v1.0/stock"
@@ -76,20 +76,21 @@ def get_front_month_contract(prefix, as_of=None):
 
 
 # ==========================================
-# 資料抓取：個股 / 期貨 5 分K
+# 資料抓取：個股 / 期貨 K線（1分 / 5分，由 timeframe 參數決定）
 # ==========================================
 
 @st.cache_data(ttl=60, show_spinner=False)
-def load_stock_5min_fugle(stock_id, api_key):
+def load_stock_kbar_fugle(stock_id, api_key, timeframe):
     """
-    個股改用 Fugle 即時行情（免費方案就有）：一次呼叫直接拿近 30 天原生 5 分K，
+    個股改用 Fugle 即時行情（免費方案就有）：一次呼叫直接拿近 30 天原生 K棒，
     資料新鮮度比 FinMind（歷史/延遲資料）好很多，符合當沖需要的即時性。
+    timeframe: "1" 或 "5"，對應 Fugle 分K端點的 timeframe 參數。
     Fugle 這個分K端點不能指定日期範圍，固定回傳近 30 天，不需要像 FinMind 那樣逐日迴圈抓。
     """
     try:
         r = requests.get(
             f"{FUGLE_URL}/historical/candles/{stock_id}",
-            params={"timeframe": "5"},
+            params={"timeframe": timeframe},
             headers={"X-API-KEY": api_key},
             timeout=20,
         )
@@ -108,8 +109,8 @@ def load_stock_5min_fugle(stock_id, api_key):
 
 
 @st.cache_data(ttl=300, show_spinner=False)
-def load_futures_5min(prefix, start, end, token):
-    """prefix: 'TX'（大台）或 'MTX'（小台）。日盤＋夜盤都保留、串成連續序列。"""
+def load_futures_kbar(prefix, start, end, token, timeframe):
+    """prefix: 'TX'（大台）或 'MTX'（小台）。日盤＋夜盤都保留、串成連續序列。timeframe: "1" 或 "5"（分鐘）。"""
     frames = []
     for day in _trading_days(start, end):
         rows = _finmind_get_day("TaiwanFuturesTick", prefix, day, token)
@@ -136,13 +137,14 @@ def load_futures_5min(prefix, start, end, token):
     df["date"] = pd.to_datetime(df["date"])
     df = df.sort_values("date").set_index("date")
 
-    df_5m = df["price"].resample("5min").ohlc()
-    df_5m["volume"] = df["volume"].resample("5min").sum()
-    df_5m = df_5m.dropna().reset_index()
+    freq = f"{timeframe}min"
+    df_kbar = df["price"].resample(freq).ohlc()
+    df_kbar["volume"] = df["volume"].resample(freq).sum()
+    df_kbar = df_kbar.dropna().reset_index()
 
-    hour = df_5m["date"].dt.hour
-    df_5m["is_night_session"] = ((hour >= 15) | (hour < 5)).astype(int)
-    return df_5m
+    hour = df_kbar["date"].dt.hour
+    df_kbar["is_night_session"] = ((hour >= 15) | (hour < 5)).astype(int)
+    return df_kbar
 
 
 @st.cache_data(ttl=3600, show_spinner=False)
@@ -253,6 +255,8 @@ if not st.session_state.disclaimer_accepted:
 st.sidebar.header("參數設定")
 product_type = st.sidebar.selectbox("商品類型", ["個股", "大台指期 (TX)", "小台指期 (MTX)"], disabled=not st.session_state.disclaimer_accepted)
 stock_code = st.sidebar.text_input("股票代碼", value="2330", disabled=not st.session_state.disclaimer_accepted) if product_type == "個股" else None
+timeframe_label = st.sidebar.radio("K棒週期", ["5分K", "1分K"], horizontal=True, disabled=not st.session_state.disclaimer_accepted)
+timeframe = "5" if timeframe_label == "5分K" else "1"
 lookback_days = st.sidebar.slider("回溯天數（訓練資料量）", min_value=5, max_value=20, value=10, disabled=not st.session_state.disclaimer_accepted)
 if product_type == "個股":
     st.sidebar.caption("💡 個股走 Fugle 即時行情，資料新鮮度接近即時；固定抓近 30 天，這裡的天數只是拿來裁切訓練窗口。")
@@ -289,16 +293,16 @@ if st.sidebar.button("開始執行預測", disabled=not st.session_state.disclai
 
     with st.spinner("🤖 正在抓取資料並訓練模型..."):
         if product_type == "個股":
-            df = load_stock_5min_fugle(stock_code, fugle_key)
+            df = load_stock_kbar_fugle(stock_code, fugle_key, timeframe)
             if not df.empty:
-                bars_per_day_estimate = 54  # 09:00~13:30 一天約 54 根 5 分K
+                bars_per_day_estimate = 270 // int(timeframe)  # 09:00~13:30 共270分鐘，換算成對應週期的根數
                 df = df.tail(lookback_days * bars_per_day_estimate).reset_index(drop=True)
             label = stock_code
         elif product_type.startswith("大台"):
-            df = load_futures_5min("TX", start_date, end_date, finmind_token)
+            df = load_futures_kbar("TX", start_date, end_date, finmind_token, timeframe)
             label = "大台指期 (TX)"
         else:
-            df = load_futures_5min("MTX", start_date, end_date, finmind_token)
+            df = load_futures_kbar("MTX", start_date, end_date, finmind_token, timeframe)
             label = "小台指期 (MTX)"
 
         if df.empty:
@@ -401,7 +405,7 @@ if st.sidebar.button("開始執行預測", disabled=not st.session_state.disclai
             if (r_foot_p > l_foot_p) and (lower_bound <= r_foot_p <= upper_bound):
                 if next_pred == 1:
                     alert_status = "success"
-                    alert_msg = f"🟢 **【安全進場訊號】** 5分K偵測到標準 W 底（右腳高於左腳），且回測落於 MA20 ~ MA50 的關鍵防守區！**此時後台 AI 模型同步強烈看漲（信心度: {ai_confidence*100:.1f}%）**，技術面與數據預測達成高度共識，**此處可安全進場**。"
+                    alert_msg = f"🟢 **【安全進場訊號】** {timeframe_label}偵測到標準 W 底（右腳高於左腳），且回測落於 MA20 ~ MA50 的關鍵防守區！**此時後台 AI 模型同步強烈看漲（信心度: {ai_confidence*100:.1f}%）**，技術面與數據預測達成高度共識，**此處可安全進場**。"
                 else:
                     alert_status = "warning"
                     alert_msg = f"⚠️ **【進場風險提示】** 技術面雖然出現 W 底且落於 MA20 ~ MA50 支撐區，**但 AI 後台模型偵測到潛在轉弱風險（下跌/盤整機率: {ai_confidence*100:.1f}%）**。此型態極有可能為誘多的「假突破」，**不建議此處冒險進場**。"
@@ -416,7 +420,7 @@ if st.sidebar.button("開始執行預測", disabled=not st.session_state.disclai
             if (r_foot_p < l_foot_p) and (lower_bound <= r_foot_p <= upper_bound):
                 if next_pred == 0:
                     alert_status = "error"
-                    alert_msg = f"🚨 **【安全退場訊號】** 5分K走出轉弱型態（右腳低於左腳），且價格已沉淪至 MA50 ~ MA80 的弱勢區間。**同時 AI 後台模型亦全面看空（看跌信心度: {ai_confidence*100:.1f}%）**，均線防守全面失守，**強烈建議現股多單退場或進行避險**。"
+                    alert_msg = f"🚨 **【安全退場訊號】** {timeframe_label}走出轉弱型態（右腳低於左腳），且價格已沉淪至 MA50 ~ MA80 的弱勢區間。**同時 AI 後台模型亦全面看空（看跌信心度: {ai_confidence*100:.1f}%）**，均線防守全面失守，**強烈建議現股多單退場或進行避險**。"
                 else:
                     alert_status = "warning"
                     alert_msg = f"⚠️ **【退場風險提示】** 雖然價格落入 MA50 ~ MA80 且右腳偏低，但 **AI 後台模型預估此處即將迎來短線反彈（看漲信心度: {ai_confidence*100:.1f}%）**，目前可能屬於主力的洗盤破底翻，**建議在此處暫緩殺低，觀察下一根K線是否站穩**。"
@@ -431,7 +435,7 @@ if st.sidebar.button("開始執行預測", disabled=not st.session_state.disclai
             st.info(alert_msg)
 
         status_text = "🔴 上漲" if next_pred == 1 else "🔵 下跌 / 盤整"
-        st.subheader(f"🤖 AI 模型即時預測方向 (下一根5分K)：{status_text} (預測信心度: {ai_confidence*100:.1f}%)")
+        st.subheader(f"🤖 AI 模型即時預測方向 (下一根{timeframe_label})：{status_text} (預測信心度: {ai_confidence*100:.1f}%)")
 
         # ---- 誠實揭露：樣本外準確率 ----
         if acc is not None:
@@ -446,7 +450,7 @@ if st.sidebar.button("開始執行預測", disabled=not st.session_state.disclai
 
         st.markdown("---")
 
-        st.subheader(f"{label} 近期 5 分鐘 K 線走勢")
+        st.subheader(f"{label} 近期 {timeframe_label} 線走勢")
         plot_dates = df_train_set["date"].iloc[split_idx:]
         fig = go.Figure(data=[go.Candlestick(
             x=plot_dates,
@@ -460,9 +464,18 @@ if st.sidebar.button("開始執行預測", disabled=not st.session_state.disclai
 
         # 平日但當天完全沒有 K 棒（國定假日、颱風假等未開盤日），一律視同休市日隱藏，
         # 不用手動維護每年的國定假日清單。
-        trading_days = set(plot_dates.dt.normalize().unique())
+        trading_days = sorted(plot_dates.dt.normalize().unique())
         all_days = pd.date_range(plot_dates.min().normalize(), plot_dates.max().normalize(), freq="D")
         closed_weekdays = [d.strftime("%Y-%m-%d") for d in all_days if d not in trading_days and d.weekday() < 5]
+
+        # 明確列出每個交易日 9:00~13:00 的整點刻度，避免 Plotly 自動選點跳過開盤 9:00 或收盤前 13:00
+        tick_hours = [9, 10, 11, 12, 13]
+        tickvals = [
+            pd.Timestamp(day) + pd.Timedelta(hours=h)
+            for day in trading_days
+            for h in tick_hours
+        ]
+        ticktext = [f"{h:02d}:00" for _ in trading_days for h in tick_hours]
 
         fig.update_xaxes(
             rangebreaks=[
@@ -470,8 +483,9 @@ if st.sidebar.button("開始執行預測", disabled=not st.session_state.disclai
                 dict(bounds=[13.5, 9], pattern="hour"),  # 隱藏收盤到隔日開盤（13:30~09:00，含跨夜0點）
                 dict(values=closed_weekdays),  # 隱藏平日但未開盤的日子（國定假日等）
             ],
-            dtick=3600000,  # 每小時一個刻度（整點標記）
-            tickformat="%H:%M",
+            tickmode="array",
+            tickvals=tickvals,
+            ticktext=ticktext,
         )
         st.plotly_chart(fig, use_container_width=True)
 
