@@ -10,7 +10,7 @@ from sklearn.metrics import accuracy_score
 import plotly.graph_objects as go
 from scipy.signal import find_peaks
 
-st.set_page_config(page_title="股票K線AI預測工具", layout="wide")
+st.set_page_config(page_title="TigerMeow股票1分盤/5分盤AI預測工具", layout="wide")
 
 FINMIND_URL = "https://api.finmindtrade.com/api/v4/data"
 FUGLE_URL = "https://api.fugle.tw/marketdata/v1.0/stock"
@@ -228,7 +228,7 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-st.title("📈 股票5分盤AI預測工具")
+st.title("📈 TigerMeow股票1分盤/5分盤AI預測工具")
 st.markdown("<div class='mobile-hint'>📱 手機版用戶：請點擊左上角 <strong>「&gt;」</strong> 符號展開側邊欄，開始設定預測參數！</div>", unsafe_allow_html=True)
 
 # ⚖️ 使用前先跳出投資免責聲明，沒按同意就不能操作
@@ -451,13 +451,19 @@ if st.sidebar.button("開始執行預測", disabled=not st.session_state.disclai
         st.markdown("---")
 
         st.subheader(f"{label} 近期 {timeframe_label} 線走勢")
-        plot_dates = df_train_set["date"].iloc[split_idx:]
+        # 圖表跟模型訓練/測試切分脫鉤：測試集是照筆數80/20切的，切點常常落在某天中午，
+        # 會讓圖表第一天從中途才開始（少了開盤09:00那段）。這裡改成固定抓「最近幾個完整交易日」來畫，
+        # 確保每個顯示出來的交易日都是從09:00完整畫起。
+        PLOT_RECENT_DAYS = 2
+        recent_dates = sorted(df_train_set["pure_date"].unique())[-PLOT_RECENT_DAYS:]
+        plot_df = df_train_set[df_train_set["pure_date"].isin(recent_dates)]
+        plot_dates = plot_df["date"]
         fig = go.Figure(data=[go.Candlestick(
             x=plot_dates,
-            open=df_train_set["open"].iloc[split_idx:],
-            high=df_train_set["high"].iloc[split_idx:],
-            low=df_train_set["low"].iloc[split_idx:],
-            close=df_train_set["close"].iloc[split_idx:],
+            open=plot_df["open"],
+            high=plot_df["high"],
+            low=plot_df["low"],
+            close=plot_df["close"],
             name="K線",
         )])
         fig.update_layout(xaxis_rangeslider_visible=False, height=500)
