@@ -302,20 +302,16 @@ st.markdown("""
     }
 }
 .app-header {
-    position: relative;
-    padding-right: 200px;
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 16px;
 }
-.app-header h1 { margin: 0; }
-.app-header img {
-    position: absolute;
-    top: 0;
-    right: 0;
-    height: 90px;
-}
+.app-header img { height: 64px; }
+.app-header h1 { margin: 0; font-size: 2rem; line-height: 1; }
 @media (max-width: 768px) {
-    .app-header { padding-right: 70px; }
-    .app-header h1 { font-size: 1.4rem; line-height: 1.3; }
-    .app-header img { height: 34px; }
+    .app-header img { height: 40px; }
+    .app-header h1 { font-size: 1.4rem; }
 }
 </style>
 """, unsafe_allow_html=True)
@@ -329,8 +325,8 @@ else:
 
 st.markdown(f"""
 <div class="app-header">
-    <h1>📈 TigerMeow股票1分盤/5分盤AI預測工具</h1>
     {logo_img_tag}
+    <h1>📈 股票1分盤/5分盤AI預測工具</h1>
 </div>
 """, unsafe_allow_html=True)
 st.markdown("<div class='mobile-hint'>📱 手機版用戶：請點擊左上角 <strong>「&gt;」</strong> 符號展開側邊欄，開始設定預測參數！</div>", unsafe_allow_html=True)
