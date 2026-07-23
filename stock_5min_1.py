@@ -9,16 +9,50 @@ from xgboost import XGBClassifier
 from sklearn.metrics import accuracy_score
 import plotly.graph_objects as go
 from scipy.signal import find_peaks
+from sqlalchemy import create_engine, text
 
 st.set_page_config(page_title="TigerMeow股票1分盤/5分盤AI預測工具", layout="wide")
 
 FINMIND_URL = "https://api.finmindtrade.com/api/v4/data"
 FUGLE_URL = "https://api.fugle.tw/marketdata/v1.0/stock"
 API_CALL_DELAY_SECONDS = 0.3
+# 本機 CSV 只在資料庫連不上時當備援，Render 重啟/重新部署後會被清空，不保證長期保存。
 ACCURACY_LOG_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "accuracy_log.csv")
 
 
-def _load_accuracy_log():
+@st.cache_resource(show_spinner=False)
+def _get_db_engine():
+    """
+    準確率紀錄的外部儲存：Supabase 免費 Postgres（透過 POSTGRESQL_URL 環境變數連線），
+    跟 update_db_py.txt 用的是同一套 SQLAlchemy 寫法。連不上就回傳 None，讓呼叫端退回本機 CSV，
+    不讓資料庫問題擋掉主要的預測功能。
+    """
+    db_url = os.environ.get("POSTGRESQL_URL")
+    if not db_url:
+        return None
+    try:
+        engine = create_engine(db_url, pool_pre_ping=True)
+        with engine.begin() as conn:
+            conn.execute(text("""
+                CREATE TABLE IF NOT EXISTS accuracy_log (
+                    id SERIAL PRIMARY KEY,
+                    run_time TIMESTAMP NOT NULL,
+                    product TEXT,
+                    label TEXT,
+                    timeframe TEXT,
+                    lookback_days INTEGER,
+                    accuracy DOUBLE PRECISION,
+                    test_samples INTEGER,
+                    next_pred TEXT,
+                    confidence DOUBLE PRECISION
+                )
+            """))
+        return engine
+    except Exception:
+        return None
+
+
+def _load_accuracy_log_csv():
     if os.path.exists(ACCURACY_LOG_PATH):
         try:
             return pd.read_csv(ACCURACY_LOG_PATH)
@@ -27,8 +61,32 @@ def _load_accuracy_log():
     return pd.DataFrame()
 
 
+def _load_accuracy_log():
+    engine = _get_db_engine()
+    if engine is not None:
+        try:
+            return pd.read_sql(text("SELECT * FROM accuracy_log ORDER BY run_time"), engine)
+        except Exception:
+            pass
+    return _load_accuracy_log_csv()
+
+
 def _append_accuracy_log(record):
-    log_df = _load_accuracy_log()
+    engine = _get_db_engine()
+    if engine is not None:
+        try:
+            with engine.begin() as conn:
+                conn.execute(text("""
+                    INSERT INTO accuracy_log
+                        (run_time, product, label, timeframe, lookback_days, accuracy, test_samples, next_pred, confidence)
+                    VALUES
+                        (:run_time, :product, :label, :timeframe, :lookback_days, :accuracy, :test_samples, :next_pred, :confidence)
+                """), record)
+            return
+        except Exception:
+            pass
+    # 資料庫不可用時退回本機 CSV，至少這次執行期間還能比較
+    log_df = _load_accuracy_log_csv()
     log_df = pd.concat([log_df, pd.DataFrame([record])], ignore_index=True)
     log_df.to_csv(ACCURACY_LOG_PATH, index=False)
 
@@ -463,7 +521,7 @@ if st.sidebar.button("開始執行預測", disabled=not st.session_state.disclai
                 st.caption(f"⚠️ 測試樣本只有 {len(X_test)} 根K棒，準確率數字的可信度有限，建議拉長回溯天數觀察是否穩定。")
 
             _append_accuracy_log({
-                "run_time": datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                "run_time": datetime.datetime.now(),
                 "product": product_type,
                 "label": label,
                 "timeframe": timeframe_label,
@@ -477,6 +535,10 @@ if st.sidebar.button("開始執行預測", disabled=not st.session_state.disclai
             st.caption("⚠️ 測試集資料不足，這次無法計算樣本外準確率，結果請更謹慎看待。")
 
         with st.expander("📊 歷史準確率紀錄（比較 1分K / 5分K）"):
+            if _get_db_engine() is not None:
+                st.caption("✅ 目前寫入 Supabase 資料庫，紀錄會跨部署保存。")
+            else:
+                st.caption("⚠️ 目前找不到 POSTGRESQL_URL，紀錄暫存在本機 CSV，重新部署後會消失。請在 Settings > Secrets 設定 POSTGRESQL_URL 連到 Supabase。")
             log_df = _load_accuracy_log()
             if log_df.empty:
                 st.caption("目前還沒有歷史紀錄，多執行幾次預測後這裡會累積資料。")

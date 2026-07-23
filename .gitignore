@@ -7,3 +7,7 @@ accuracy_log.csv
 
 # 舊版本手動快照，裡面混了 Fugle token，不進版本控制
 程式碼修改紀錄/
+
+# Supabase 連線字串／密碼，明文機密，不進版本控制
+POSTGRESQL_URL.txt
+supabase_code.txt
